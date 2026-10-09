@@ -20,6 +20,11 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
 
         AppWindow.SetIcon("Assets/AppIcon.ico");
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+        {
+            presenter.PreferredMinimumWidth = 1080;
+            presenter.PreferredMinimumHeight = 640;
+        }
 
         // Navigate the root frame to the main page on startup.
         RootFrame.Navigate(typeof(MainPage));

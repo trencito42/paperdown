@@ -41,7 +41,7 @@ public sealed class MarkdownProcessor : IMarkdownProcessor
 
         if (settings.SanitizeHtml)
         {
-            html = SanitizeUnsafeHtml(html);
+            html = HtmlSanitizerService.Sanitize(html);
         }
 
         return html;
@@ -62,11 +62,4 @@ public sealed class MarkdownProcessor : IMarkdownProcessor
         return html;
     }
 
-    private static string SanitizeUnsafeHtml(string html)
-    {
-        html = Regex.Replace(html, @"<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>", string.Empty, RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @"<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>", string.Empty, RegexOptions.IgnoreCase);
-        html = Regex.Replace(html, @"\son\w+\s*=\s*(['""]).*?\1", string.Empty, RegexOptions.IgnoreCase);
-        return html;
-    }
 }

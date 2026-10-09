@@ -61,7 +61,12 @@ public sealed class WebView2PdfExportService : IPdfExportService
             Directory.CreateDirectory(outputDir);
         }
 
-        var tempHtml = Path.Combine(Path.GetTempPath(), $"paperdown_{Guid.NewGuid():N}.html");
+        var exportWorkDir = Path.Combine(
+            Path.GetTempPath(),
+            "Paperdown",
+            "export");
+        Directory.CreateDirectory(exportWorkDir);
+        var tempHtml = Path.Combine(exportWorkDir, $"document_{Guid.NewGuid():N}.html");
         File.WriteAllText(tempHtml, htmlContent, System.Text.Encoding.UTF8);
 
         ExportResult? exportResult = null;
@@ -82,11 +87,18 @@ public sealed class WebView2PdfExportService : IPdfExportService
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var userData = Path.Combine(Path.GetTempPath(), "Paperdown_WebView2");
-                var env = await CoreWebView2Environment.CreateAsync(null, userData);
-                await webView.EnsureCoreWebView2Async(env);
+                WebView2EnvironmentHelper.PrepareNativeLoader();
+                var envResult = await WebView2EnvironmentHelper.CreateEnvironmentAsync(cancellationToken);
+                if (!envResult.Success)
+                {
+                    throw new InvalidOperationException(
+                        envResult.UserMessage?.Summary ?? envResult.Exception?.Message ?? "WebView2 failed to start.");
+                }
 
-                webView.CoreWebView2.Settings.IsScriptEnabled = false;
+                await webView.EnsureCoreWebView2Async(
+                    await CoreWebView2Environment.CreateAsync(null, WebView2EnvironmentHelper.GetUserDataFolder()));
+
+                webView.CoreWebView2.Settings.IsScriptEnabled = true;
                 webView.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = false;
                 webView.CoreWebView2.Settings.IsWebMessageEnabled = false;
 
@@ -110,7 +122,12 @@ public sealed class WebView2PdfExportService : IPdfExportService
                     throw new InvalidOperationException("Failed to load document HTML for PDF export.");
                 }
 
-                await Task.Delay(150, cancellationToken);
+                await WebView2DocumentLoadWaiter.WaitForDocumentReadyAsync(
+                    webView.CoreWebView2,
+                    cancellationToken,
+                    TimeSpan.FromSeconds(30));
+
+                webView.CoreWebView2.Settings.IsScriptEnabled = false;
 
                 var success = await webView.CoreWebView2.PrintToPdfAsync(outputFilePath, settings);
                 if (!success)
@@ -118,7 +135,7 @@ public sealed class WebView2PdfExportService : IPdfExportService
                     throw new InvalidOperationException("WebView2 PrintToPdfAsync returned false.");
                 }
 
-                var pageCount = EstimatePdfPageCount(outputFilePath);
+                var pageCount = PdfPageCounter.CountPages(outputFilePath);
                 exportResult = new ExportResult
                 {
                     Success = true,
@@ -162,9 +179,9 @@ public sealed class WebView2PdfExportService : IPdfExportService
 
     private static (double width, double height) GetPageDimensionsInches(PageSettings settings)
     {
-        var (w, h) = settings.PageSize == PageSize.Letter
-            ? (8.5, 11.0)
-            : (8.27, 11.69);
+        var (wMm, hMm) = PageDimensions.GetPageSizeMm(settings);
+        var w = wMm / 25.4;
+        var h = hMm / 25.4;
 
         if (settings.Orientation == PageOrientation.Landscape)
         {
@@ -174,18 +191,4 @@ public sealed class WebView2PdfExportService : IPdfExportService
         return (w, h);
     }
 
-    private static int EstimatePdfPageCount(string pdfPath)
-    {
-        try
-        {
-            var bytes = File.ReadAllBytes(pdfPath);
-            var text = System.Text.Encoding.Latin1.GetString(bytes);
-            var matches = System.Text.RegularExpressions.Regex.Matches(text, @"/Type\s*/Page\b");
-            return Math.Max(1, matches.Count);
-        }
-        catch
-        {
-            return 1;
-        }
-    }
 }

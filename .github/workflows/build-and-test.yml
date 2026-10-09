@@ -18,17 +18,16 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Restore
-        run: dotnet restore Paperdown.sln
+        run: dotnet restore Paperdown.sln -p:Platform=x64
 
       - name: Build
         run: dotnet build Paperdown.sln -c Release -p:Platform=x64 --no-restore
 
       - name: Test
-        run: dotnet test tests/Paperdown.Tests/Paperdown.Tests.csproj -c Release --no-build --verbosity normal
+        run: dotnet test tests/Paperdown.Tests/Paperdown.Tests.csproj -c Release -p:Platform=x64 --no-build --verbosity normal
 
       - name: Publish portable app (x64)
-        run: |
-          dotnet publish src/Paperdown.App/Paperdown.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/app
+        run: dotnet publish src/Paperdown.App/Paperdown.App.csproj -c Release -p:Platform=x64 -r win-x64 --self-contained false -o artifacts/app
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v4

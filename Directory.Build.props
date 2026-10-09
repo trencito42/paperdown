@@ -3,4 +3,9 @@
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Paperdown.App' and ('$(Platform)' == '' or '$(Platform)' == 'Any CPU')">
     <Platform>x64</Platform>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <PublishTrimmed>false</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+  </PropertyGroup>
 </Project>

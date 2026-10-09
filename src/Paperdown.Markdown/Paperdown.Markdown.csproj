@@ -6,7 +6,8 @@
     <RootNamespace>Paperdown.Markdown</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Markdig" Version="0.38.0" />
+    <PackageReference Include="HtmlSanitizer" />
+    <PackageReference Include="Markdig" />
     <ProjectReference Include="..\Paperdown.Core\Paperdown.Core.csproj" />
   </ItemGroup>
 </Project>

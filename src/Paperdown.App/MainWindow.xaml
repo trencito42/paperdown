@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:media="using:Microsoft.UI.Xaml.Media.Imaging"
     Title="Paperdown">
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -17,7 +18,11 @@
 
         <TitleBar x:Name="AppTitleBar" Title="Paperdown">
             <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/AppIcon.ico" />
+                <ImageIconSource>
+                    <ImageIconSource.ImageSource>
+                        <media:SvgImageSource UriSource="ms-appx:///Assets/paperdown.svg" />
+                    </ImageIconSource.ImageSource>
+                </ImageIconSource>
             </TitleBar.IconSource>
             <TitleBar.RightHeader>
                 <TextBlock

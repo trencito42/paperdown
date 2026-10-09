@@ -9,4 +9,5 @@ public sealed class AppPreferences
     public bool EditorWordWrap { get; set; } = true;
     public bool ShowLineNumbers { get; set; }
     public bool EditorCollapsed { get; set; }
+    public double EditorPaneWidth { get; set; } = 420;
 }

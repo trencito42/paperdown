@@ -12,7 +12,9 @@ public enum DocumentTheme
 public enum PageSize
 {
     A4,
-    Letter
+    A5,
+    Letter,
+    Legal,
 }
 
 public enum PageOrientation

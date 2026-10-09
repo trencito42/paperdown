@@ -6,6 +6,7 @@
     <RootNamespace>Paperdown.Rendering</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" />
     <ProjectReference Include="..\Paperdown.Core\Paperdown.Core.csproj" />
     <ProjectReference Include="..\Paperdown.Markdown\Paperdown.Markdown.csproj" />
   </ItemGroup>

@@ -1,13 +1,16 @@
 using System.Text;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Paperdown.Core.Models;
 using Paperdown.Core.Services;
 using Paperdown.Markdown;
 using Paperdown.Pdf;
 using Paperdown.Rendering;
+using Paperdown_App.Dialogs;
 using Paperdown_App.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -23,19 +26,34 @@ public sealed partial class MainPage : Page
     private readonly HtmlDocumentRenderer _renderer = new(new MarkdownProcessor());
     private readonly WebView2PdfExportService _pdfExportService = new();
     private readonly AppPreferencesStore _preferencesStore = new();
-    private readonly BrandingPresetStore _brandingPresetStore = new();
+    private readonly BrandingDialog _brandingDialog;
 
     private readonly DispatcherTimer _previewDebounce = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private readonly DispatcherTimer _draftTimer = new() { Interval = TimeSpan.FromSeconds(30) };
 
     private string? _currentFilePath;
     private bool _webViewReady;
+    private bool _pdfEngineReady;
+    private string _lastDiagnostics = string.Empty;
     private AppPreferences _preferences = new();
     private CancellationTokenSource? _exportCts;
+    private CancellationTokenSource? _previewCts;
+    private int _previewGeneration;
+    private DocumentViewMode _viewMode = DocumentViewMode.Split;
+    private static readonly string PreviewHtmlPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Paperdown",
+        "preview",
+        "current.html");
+    private double _savedEditorWidth = 420;
+    private bool _splitterDragging;
+    private double _splitterStartX;
+    private double _splitterStartWidth;
 
     public MainPage()
     {
         InitializeComponent();
+        _brandingDialog = new BrandingDialog(App.Window);
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
 
@@ -51,6 +69,8 @@ public sealed partial class MainPage : Page
         {
             _viewModel.IsDirty = true;
             UpdateTitle();
+            UpdateWordCount();
+            UpdateLineNumbers();
             _previewDebounce.Stop();
             _previewDebounce.Start();
         };
@@ -63,8 +83,14 @@ public sealed partial class MainPage : Page
         FindButton.Click += async (_, _) => await ShowFindReplaceAsync();
         ZoomInButton.Click += (_, _) => AdjustZoom(0.1);
         ZoomOutButton.Click += (_, _) => AdjustZoom(-0.1);
-        FitWidthButton.Click += (_, _) => _viewModel.PreviewZoom = 1.0;
+        FitWidthButton.Click += (_, _) => SetPreviewZoom(1.0);
+        FitPageButton.Click += (_, _) => SetPreviewZoom(0.85);
         ToggleEditorButton.Click += (_, _) => ToggleEditor();
+        WordWrapButton.Click += (_, _) => ToggleWordWrap();
+
+        PreviewInfoRetryButton.Click += async (_, _) => await RetryWebViewAsync();
+        PreviewFallbackRetryButton.Click += async (_, _) => await RetryWebViewAsync();
+        CopyDiagnosticsButton.Click += async (_, _) => await CopyDiagnosticsAsync();
 
         ThemeComboBox.SelectionChanged += (_, _) =>
         {
@@ -76,6 +102,13 @@ public sealed partial class MainPage : Page
                 _ = UpdatePreviewAsync();
             }
         };
+
+        SplitterBar.PointerPressed += OnSplitterPointerPressed;
+        SplitterBar.PointerMoved += OnSplitterPointerMoved;
+        SplitterBar.PointerReleased += OnSplitterPointerReleased;
+        SplitterBar.PointerCanceled += OnSplitterPointerReleased;
+
+        PreviewWebView.Loaded += async (_, _) => await InitializeWebViewAsync();
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -83,10 +116,16 @@ public sealed partial class MainPage : Page
         _preferences = _preferencesStore.Load();
         _viewModel.PreviewZoom = _preferences.PreviewZoom;
         _viewModel.WordWrap = _preferences.EditorWordWrap;
+        _savedEditorWidth = Math.Clamp(_preferences.EditorPaneWidth, 240, 900);
         MarkdownEditor.TextWrapping = _viewModel.WordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
 
+        if (_preferences.LastDocumentSettings is not null)
+        {
+            CopySettings(_preferences.LastDocumentSettings, _viewModel.Settings);
+            _viewModel.SelectedTheme = _viewModel.Settings.Theme;
+        }
+
         PopulateThemeCombo();
-        await InitializeWebViewAsync();
         TryRestoreDraft();
 
         if (string.IsNullOrWhiteSpace(MarkdownEditor.Text))
@@ -94,32 +133,64 @@ public sealed partial class MainPage : Page
             MarkdownEditor.Text = GetWelcomeMarkdown();
         }
 
+        EditorColumn.Width = new GridLength(_savedEditorWidth);
+        if (_preferences.EditorCollapsed)
+        {
+            ApplyViewMode(DocumentViewMode.PreviewOnly);
+        }
+        else
+        {
+            ApplyViewMode(DocumentViewMode.Split);
+        }
+
+        LineNumberPanel.Visibility = _preferences.ShowLineNumbers ? Visibility.Visible : Visibility.Collapsed;
         UpdateZoomLabel();
         UpdateTitle();
-        _ = UpdatePreviewAsync();
+        UpdateWordCount();
+        UpdateLineNumbers();
+        SetStatus("Ready");
 
-        var accelerator = new KeyboardAccelerator { Key = VirtualKey.S, Modifiers = VirtualKeyModifiers.Control };
-        accelerator.Invoked += async (_, _) => await SaveFileAsync();
-        KeyboardAccelerators.Add(accelerator);
-
-        var openAccel = new KeyboardAccelerator { Key = VirtualKey.O, Modifiers = VirtualKeyModifiers.Control };
-        openAccel.Invoked += async (_, _) => await OpenFileAsync();
-        KeyboardAccelerators.Add(openAccel);
-
-        var exportAccel = new KeyboardAccelerator { Key = VirtualKey.E, Modifiers = VirtualKeyModifiers.Control };
-        exportAccel.Invoked += async (_, _) => await ExportPdfAsync();
-        KeyboardAccelerators.Add(exportAccel);
-
+        RegisterAccelerators();
         AllowDrop = true;
         DragOver += OnDragOver;
         Drop += OnDrop;
         _draftTimer.Start();
+
+        await ProbePdfEngineAsync();
+        if (_webViewReady)
+        {
+            await UpdatePreviewAsync();
+        }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _draftTimer.Stop();
         _exportCts?.Cancel();
+        _previewCts?.Cancel();
+    }
+
+    private void RegisterAccelerators()
+    {
+        AddAccelerator(VirtualKey.S, VirtualKeyModifiers.Control, async () => await SaveFileAsync());
+        AddAccelerator(VirtualKey.O, VirtualKeyModifiers.Control, async () => await OpenFileAsync());
+        AddAccelerator(VirtualKey.E, VirtualKeyModifiers.Control, async () => await ExportPdfAsync());
+        AddAccelerator(VirtualKey.E, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => ToggleEditor());
+        AddAccelerator(VirtualKey.F, VirtualKeyModifiers.Control, async () => await ShowFindReplaceAsync());
+    }
+
+    private void AddAccelerator(VirtualKey key, VirtualKeyModifiers modifiers, Func<Task> action)
+    {
+        var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
+        accelerator.Invoked += async (_, _) => await action();
+        KeyboardAccelerators.Add(accelerator);
+    }
+
+    private void AddAccelerator(VirtualKey key, VirtualKeyModifiers modifiers, Action action)
+    {
+        var accelerator = new KeyboardAccelerator { Key = key, Modifiers = modifiers };
+        accelerator.Invoked += (_, _) => action();
+        KeyboardAccelerators.Add(accelerator);
     }
 
     private void PopulateThemeCombo()
@@ -137,39 +208,115 @@ public sealed partial class MainPage : Page
         ThemeComboBox.SelectedIndex = (int)_viewModel.SelectedTheme;
     }
 
+    private async Task ProbePdfEngineAsync()
+    {
+        var probe = WebView2EnvironmentHelper.ProbeRuntime();
+        _pdfEngineReady = probe.RuntimeInstalled && probe.LoaderPresent;
+        ExportPdfButton.IsEnabled = _pdfEngineReady;
+        if (!_pdfEngineReady)
+        {
+            ToolTipService.SetToolTip(ExportPdfButton, "PDF export requires WebView2 (install runtime or fix deployment).");
+        }
+    }
+
     private async Task InitializeWebViewAsync()
     {
+        if (_webViewReady)
+        {
+            return;
+        }
+
         try
         {
+            WebView2EnvironmentHelper.PrepareNativeLoader();
+            var probe = WebView2EnvironmentHelper.ProbeRuntime();
+            _lastDiagnostics = WebView2EnvironmentHelper.BuildDiagnosticsText(null, probe);
+
             await PreviewWebView.EnsureCoreWebView2Async();
-            PreviewWebView.CoreWebView2.Settings.IsScriptEnabled = false;
-            PreviewWebView.CoreWebView2.Settings.AreDefaultScriptDialogsEnabled = false;
-            PreviewWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            PreviewWebView.CoreWebView2.NavigationStarting += (_, args) =>
+            var core = PreviewWebView.CoreWebView2;
+            core.Settings.IsScriptEnabled = false;
+            core.Settings.AreDefaultScriptDialogsEnabled = false;
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.NavigationStarting += (_, args) =>
             {
                 if (args.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                     args.Uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!args.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        args.Cancel = true;
-                    }
+                    args.Cancel = true;
                 }
             };
+
             _webViewReady = true;
+            _pdfEngineReady = true;
+            PreviewWebView.Visibility = Visibility.Visible;
+            PreviewFallbackPanel.Visibility = Visibility.Collapsed;
+            PreviewInfoBar.IsOpen = false;
+            ExportPdfButton.IsEnabled = true;
+            await UpdatePreviewAsync();
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"WebView2 runtime required: {ex.Message}";
+            var failed = WebView2EnvironmentResult.Failed(ex, WebView2EnvironmentHelper.ProbeRuntime());
+            _lastDiagnostics = failed.DiagnosticsText;
+            ShowPreviewFailure(failed.UserMessage, _lastDiagnostics);
+            await ProbePdfEngineAsync();
         }
+    }
+
+    private async Task RetryWebViewAsync()
+    {
+        _webViewReady = false;
+        PreviewInfoBar.IsOpen = false;
+        SetStatus("Retrying preview…");
+        await InitializeWebViewAsync();
+    }
+
+    private void ShowPreviewFailure(WebView2UserMessage? message, string diagnostics)
+    {
+        _lastDiagnostics = diagnostics;
+        var title = message?.Title ?? "Preview unavailable";
+        var summary = message?.Summary ?? "The document preview could not start.";
+
+        PreviewWebView.Visibility = Visibility.Collapsed;
+        PreviewFallbackPanel.Visibility = Visibility.Visible;
+        PreviewFallbackTitle.Text = title;
+        PreviewFallbackSummary.Text = summary;
+        PreviewRuntimeLink.Visibility = message?.IsRuntimeMissing == true ? Visibility.Visible : Visibility.Collapsed;
+
+        PreviewInfoBar.Title = title;
+        PreviewInfoBar.Message = summary;
+        PreviewInfoBar.IsOpen = true;
+
+        SetStatus("Preview unavailable — editing still works");
+    }
+
+    private async Task CopyDiagnosticsAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_lastDiagnostics))
+        {
+            _lastDiagnostics = WebView2EnvironmentHelper.BuildDiagnosticsText(null, WebView2EnvironmentHelper.ProbeRuntime());
+        }
+
+        var package = new DataPackage();
+        package.SetText(_lastDiagnostics);
+        Clipboard.SetContent(package);
+        SetStatus("Diagnostics copied");
+        await Task.CompletedTask;
     }
 
     private async Task UpdatePreviewAsync()
     {
-        if (!_webViewReady)
+        if (!_webViewReady || _viewMode == DocumentViewMode.EditorOnly)
         {
             return;
         }
+
+        _previewCts?.Cancel();
+        _previewCts = new CancellationTokenSource();
+        var token = _previewCts.Token;
+        var generation = Interlocked.Increment(ref _previewGeneration);
 
         try
         {
@@ -178,19 +325,27 @@ public sealed partial class MainPage : Page
             _viewModel.Settings.Theme = _viewModel.SelectedTheme;
 
             var exportHtml = _renderer.RenderCompleteHtmlDocument(MarkdownEditor.Text, _viewModel.Settings);
-            var previewHtml = PreviewHtmlHelper.WrapForScreenPreview(exportHtml, _viewModel.PreviewZoom);
+            var previewHtml = PreviewHtmlHelper.WrapForScreenPreview(exportHtml, _viewModel.Settings, _viewModel.PreviewZoom);
             _viewModel.EstimatedPageCount = EstimatePagesFromHtml(exportHtml);
 
-            var temp = Path.Combine(Path.GetTempPath(), $"paperdown_preview_{Guid.NewGuid():N}.html");
-            await File.WriteAllTextAsync(temp, previewHtml, Encoding.UTF8);
-            PreviewWebView.CoreWebView2.Navigate(new Uri(temp).AbsoluteUri);
+            Directory.CreateDirectory(Path.GetDirectoryName(PreviewHtmlPath)!);
+            await File.WriteAllTextAsync(PreviewHtmlPath, previewHtml, Encoding.UTF8, token);
+            if (generation != _previewGeneration || token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            PreviewWebView.CoreWebView2.Navigate(new Uri(PreviewHtmlPath).AbsoluteUri);
 
             PageCountText.Text = $"~{_viewModel.EstimatedPageCount} page(s)";
-            StatusText.Text = _viewModel.IsDirty ? "Unsaved changes" : "Ready";
+            SetStatus(_viewModel.IsDirty ? "Unsaved changes" : "Ready");
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Preview error: {ex.Message}";
+            SetStatus("Preview update failed");
+            ShowPreviewFailure(
+                new WebView2UserMessage("Preview error", ex.Message, false, true),
+                WebView2EnvironmentHelper.BuildDiagnosticsText(ex, WebView2EnvironmentHelper.ProbeRuntime()));
         }
         finally
         {
@@ -199,11 +354,8 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private static int EstimatePagesFromHtml(string html)
-    {
-        var length = html.Length;
-        return Math.Max(1, (int)Math.Ceiling(length / 6000.0));
-    }
+    private static int EstimatePagesFromHtml(string html) =>
+        Math.Max(1, (int)Math.Ceiling(html.Length / 6000.0));
 
     private async Task OpenFileAsync()
     {
@@ -230,6 +382,7 @@ public sealed partial class MainPage : Page
         _viewModel.Settings.BaseDirectoryForRelativeAssets = Path.GetDirectoryName(file.Path);
         RememberRecent(file.Path);
         UpdateTitle();
+        UpdateWordCount();
         await UpdatePreviewAsync();
     }
 
@@ -244,7 +397,8 @@ public sealed partial class MainPage : Page
         await File.WriteAllTextAsync(_currentFilePath, MarkdownEditor.Text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         _viewModel.IsDirty = false;
         UpdateTitle();
-        StatusText.Text = "Saved";
+        SetStatus("Saved");
+        PersistDocumentSettings();
     }
 
     private async Task SaveFileAsAsync()
@@ -266,19 +420,22 @@ public sealed partial class MainPage : Page
         _viewModel.Settings.BaseDirectoryForRelativeAssets = Path.GetDirectoryName(file.Path);
         RememberRecent(file.Path);
         UpdateTitle();
+        PersistDocumentSettings();
     }
 
     private async Task ExportPdfAsync()
     {
+        if (!_pdfEngineReady)
+        {
+            await ShowMessageAsync("PDF export unavailable", "Install the WebView2 Runtime or use Retry on the preview panel, then export again.");
+            return;
+        }
+
         var picker = new FileSavePicker();
         InitializePicker(picker);
         picker.FileTypeChoices.Add("PDF", [".pdf"]);
         var suggested = Path.GetFileNameWithoutExtension(_currentFilePath ?? "document") + ".pdf";
         picker.SuggestedFileName = suggested;
-        if (!string.IsNullOrWhiteSpace(_preferences.LastExportDirectory) && Directory.Exists(_preferences.LastExportDirectory))
-        {
-            picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        }
 
         var file = await picker.PickSaveFileAsync();
         if (file is null)
@@ -305,7 +462,7 @@ public sealed partial class MainPage : Page
         _exportCts?.Cancel();
         _exportCts = new CancellationTokenSource();
         ExportPdfButton.IsEnabled = false;
-        StatusText.Text = "Exporting PDF…";
+        SetStatus("Exporting PDF…");
 
         try
         {
@@ -318,7 +475,7 @@ public sealed partial class MainPage : Page
 
             if (!result.Success)
             {
-                await ShowErrorAsync(result.ErrorMessage ?? "PDF export failed.");
+                await ShowMessageAsync("Export failed", result.ErrorMessage ?? "PDF export failed.");
                 return;
             }
 
@@ -349,159 +506,42 @@ public sealed partial class MainPage : Page
                 }
             }
 
-            StatusText.Text = "Export complete";
+            SetStatus("Export complete");
         }
         catch (Exception ex)
         {
-            await ShowErrorAsync(ex.Message);
+            await ShowMessageAsync("Export failed", ex.Message);
         }
         finally
         {
-            ExportPdfButton.IsEnabled = true;
+            ExportPdfButton.IsEnabled = _pdfEngineReady;
         }
     }
 
     private async Task ShowPageSettingsAsync()
     {
-        var page = _viewModel.Settings.Page;
-        var sizeBox = new ComboBox { Header = "Page size", HorizontalAlignment = HorizontalAlignment.Stretch };
-        sizeBox.Items.Add(new ComboBoxItem { Content = "A4", Tag = PageSize.A4 });
-        sizeBox.Items.Add(new ComboBoxItem { Content = "Letter", Tag = PageSize.Letter });
-        sizeBox.SelectedIndex = page.PageSize == PageSize.Letter ? 1 : 0;
-
-        var orientationBox = new ComboBox { Header = "Orientation", HorizontalAlignment = HorizontalAlignment.Stretch };
-        orientationBox.Items.Add(new ComboBoxItem { Content = "Portrait", Tag = PageOrientation.Portrait });
-        orientationBox.Items.Add(new ComboBoxItem { Content = "Landscape", Tag = PageOrientation.Landscape });
-        orientationBox.SelectedIndex = page.Orientation == PageOrientation.Landscape ? 1 : 0;
-
-        var marginBox = new NumberBox { Header = "Margins (mm)", Value = page.MarginTopMm, Minimum = 5, Maximum = 40, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
-
-        var panel = new StackPanel { Spacing = 12, MinWidth = 320 };
-        panel.Children.Add(sizeBox);
-        panel.Children.Add(orientationBox);
-        panel.Children.Add(marginBox);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Page settings",
-            Content = panel,
-            PrimaryButtonText = "Apply",
-            CloseButtonText = "Cancel",
-            XamlRoot = XamlRoot,
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+        var updated = await PageSettingsDialog.ShowAsync(_viewModel.Settings.Page, XamlRoot);
+        if (updated is null)
         {
             return;
         }
 
-        if (sizeBox.SelectedItem is ComboBoxItem sizeItem && sizeItem.Tag is PageSize ps)
-        {
-            page.PageSize = ps;
-        }
-
-        if (orientationBox.SelectedItem is ComboBoxItem orientItem && orientItem.Tag is PageOrientation po)
-        {
-            page.Orientation = po;
-        }
-
-        var margin = marginBox.Value;
-        page.MarginTopMm = margin;
-        page.MarginRightMm = margin;
-        page.MarginBottomMm = margin;
-        page.MarginLeftMm = margin;
+        _viewModel.Settings.Page = updated;
+        PersistDocumentSettings();
         await UpdatePreviewAsync();
     }
 
     private async Task ShowBrandingDialogAsync()
     {
-        var branding = _viewModel.Settings.Branding;
-        var enabled = new CheckBox { Content = "Enable branding", IsChecked = branding.Enabled };
-        var title = new TextBox { Header = "Document title", Text = branding.DocumentTitle };
-        var company = new TextBox { Header = "Company / project", Text = branding.CompanyName };
-        var author = new TextBox { Header = "Author", Text = branding.Author };
-        var cover = new CheckBox { Content = "Cover page", IsChecked = branding.ShowCoverPage };
-        var pageNumbers = new CheckBox { Content = "Page numbers", IsChecked = branding.ShowPageNumbers };
-        var logoButton = new Button { Content = "Upload logo (PNG/JPEG)" };
-
-        logoButton.Click += async (_, _) =>
-        {
-            var picker = new FileOpenPicker();
-            InitializePicker(picker);
-            picker.FileTypeFilter.Add(".png");
-            picker.FileTypeFilter.Add(".jpg");
-            picker.FileTypeFilter.Add(".jpeg");
-            var file = await picker.PickSingleFileAsync();
-            if (file is null)
-            {
-                return;
-            }
-
-            var bytes = await File.ReadAllBytesAsync(file.Path);
-            var mime = file.FileType.ToLowerInvariant() switch
-            {
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                _ => "application/octet-stream",
-            };
-            branding.LogoDataUri = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
-            branding.LogoFilePath = file.Path;
-            logoButton.Content = $"Logo: {file.Name}";
-        };
-
-        var panel = new StackPanel { Spacing = 10, MinWidth = 380 };
-        panel.Children.Add(enabled);
-        panel.Children.Add(title);
-        panel.Children.Add(company);
-        panel.Children.Add(author);
-        panel.Children.Add(logoButton);
-        panel.Children.Add(cover);
-        panel.Children.Add(pageNumbers);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Branding",
-            Content = panel,
-            PrimaryButtonText = "Apply",
-            SecondaryButtonText = "Save preset",
-            CloseButtonText = "Cancel",
-            XamlRoot = XamlRoot,
-        };
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.None)
+        var updated = await _brandingDialog.ShowAsync(_viewModel.Settings.Branding, XamlRoot);
+        if (updated is null)
         {
             return;
         }
 
-        branding.Enabled = enabled.IsChecked == true;
-        branding.DocumentTitle = title.Text;
-        branding.CompanyName = company.Text;
-        branding.Author = author.Text;
-        branding.ShowCoverPage = cover.IsChecked == true;
-        branding.ShowPageNumbers = pageNumbers.IsChecked == true;
-
-        if (result == ContentDialogResult.Secondary)
-        {
-            var nameBox = new TextBox { Header = "Preset name", PlaceholderText = "Corporate default" };
-            var saveDialog = new ContentDialog
-            {
-                Title = "Save branding preset",
-                Content = nameBox,
-                PrimaryButtonText = "Save",
-                CloseButtonText = "Cancel",
-                XamlRoot = XamlRoot,
-            };
-            if (await saveDialog.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
-            {
-                _brandingPresetStore.Save(nameBox.Text.Trim(), branding);
-            }
-        }
-
-        if (result == ContentDialogResult.Primary || result == ContentDialogResult.Secondary)
-        {
-            await UpdatePreviewAsync();
-        }
+        _viewModel.Settings.Branding = updated;
+        PersistDocumentSettings();
+        await UpdatePreviewAsync();
     }
 
     private async Task ShowFindReplaceAsync()
@@ -531,9 +571,11 @@ public sealed partial class MainPage : Page
         await UpdatePreviewAsync();
     }
 
-    private void AdjustZoom(double delta)
+    private void AdjustZoom(double delta) => SetPreviewZoom(_viewModel.PreviewZoom + delta);
+
+    private void SetPreviewZoom(double zoom)
     {
-        _viewModel.PreviewZoom = Math.Clamp(_viewModel.PreviewZoom + delta, 0.5, 2.0);
+        _viewModel.PreviewZoom = Math.Clamp(zoom, 0.5, 2.0);
         _preferences.PreviewZoom = _viewModel.PreviewZoom;
         _preferencesStore.Save(_preferences);
         UpdateZoomLabel();
@@ -544,9 +586,141 @@ public sealed partial class MainPage : Page
 
     private void ToggleEditor()
     {
-        _viewModel.EditorVisible = !_viewModel.EditorVisible;
-        EditorColumn.Width = _viewModel.EditorVisible ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
-        EditorPanel.Visibility = _viewModel.EditorVisible ? Visibility.Visible : Visibility.Collapsed;
+        if (_viewMode == DocumentViewMode.PreviewOnly)
+        {
+            ApplyViewMode(DocumentViewMode.Split);
+        }
+        else
+        {
+            ApplyViewMode(DocumentViewMode.PreviewOnly);
+        }
+    }
+
+    private void HideEditorPane() => ApplyViewMode(DocumentViewMode.PreviewOnly);
+
+    private void ShowEditorPane() => ApplyViewMode(DocumentViewMode.Split);
+
+    private void ApplyViewMode(DocumentViewMode mode)
+    {
+        if (mode == DocumentViewMode.PreviewOnly)
+        {
+            _savedEditorWidth = EditorColumn.ActualWidth > 0 ? EditorColumn.ActualWidth : _savedEditorWidth;
+        }
+
+        _viewMode = mode;
+        _viewModel.EditorVisible = mode is DocumentViewMode.Split or DocumentViewMode.EditorOnly;
+
+        switch (mode)
+        {
+            case DocumentViewMode.Split:
+                EditorColumn.MinWidth = 240;
+                EditorColumn.Width = new GridLength(Math.Clamp(_savedEditorWidth, 240, 900));
+                EditorPanel.Visibility = Visibility.Visible;
+                PreviewPanel.Visibility = Visibility.Visible;
+                PreviewColumn.MinWidth = 280;
+                PreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+                SplitterBar.Visibility = Visibility.Visible;
+                _preferences.EditorCollapsed = false;
+                break;
+            case DocumentViewMode.PreviewOnly:
+                EditorColumn.Width = new GridLength(0);
+                EditorColumn.MinWidth = 0;
+                EditorPanel.Visibility = Visibility.Collapsed;
+                PreviewPanel.Visibility = Visibility.Visible;
+                PreviewColumn.MinWidth = 280;
+                PreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+                SplitterBar.Visibility = Visibility.Collapsed;
+                _preferences.EditorCollapsed = true;
+                _preferences.EditorPaneWidth = _savedEditorWidth;
+                _ = UpdatePreviewAsync();
+                break;
+            case DocumentViewMode.EditorOnly:
+                EditorColumn.MinWidth = 240;
+                EditorColumn.Width = new GridLength(1, GridUnitType.Star);
+                EditorPanel.Visibility = Visibility.Visible;
+                PreviewPanel.Visibility = Visibility.Collapsed;
+                PreviewColumn.Width = new GridLength(0);
+                PreviewColumn.MinWidth = 0;
+                SplitterBar.Visibility = Visibility.Collapsed;
+                _preferences.EditorCollapsed = false;
+                break;
+        }
+
+        _preferencesStore.Save(_preferences);
+        UpdateEditorToggleUi();
+        if (mode == DocumentViewMode.Split)
+        {
+            MarkdownEditor.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void UpdateEditorToggleUi()
+    {
+        var previewOnly = _viewMode == DocumentViewMode.PreviewOnly;
+        ToggleEditorButton.Label = previewOnly ? "Show editor" : "Hide editor";
+        ToolTipService.SetToolTip(
+            ToggleEditorButton,
+            previewOnly ? "Show editor (Ctrl+Shift+E)" : "Hide editor — preview only (Ctrl+Shift+E)");
+        ToggleEditorButton.Icon = new SymbolIcon(previewOnly ? Symbol.Edit : Symbol.FullScreen);
+    }
+
+    private enum DocumentViewMode
+    {
+        Split,
+        PreviewOnly,
+        EditorOnly,
+    }
+
+    private void ToggleWordWrap()
+    {
+        _viewModel.WordWrap = !_viewModel.WordWrap;
+        MarkdownEditor.TextWrapping = _viewModel.WordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        _preferences.EditorWordWrap = _viewModel.WordWrap;
+        _preferencesStore.Save(_preferences);
+        WordWrapButton.Label = _viewModel.WordWrap ? "Wrap on" : "Wrap off";
+    }
+
+    private void OnSplitterPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_viewModel.EditorVisible)
+        {
+            return;
+        }
+
+        _splitterDragging = true;
+        _splitterStartX = e.GetCurrentPoint(EditorPreviewGrid).Position.X;
+        _splitterStartWidth = EditorColumn.ActualWidth;
+        SplitterBar.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnSplitterPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_splitterDragging)
+        {
+            return;
+        }
+
+        var x = e.GetCurrentPoint(EditorPreviewGrid).Position.X;
+        var delta = x - _splitterStartX;
+        var width = Math.Clamp(_splitterStartWidth + delta, 240, EditorPreviewGrid.ActualWidth - 300);
+        EditorColumn.Width = new GridLength(width);
+        _savedEditorWidth = width;
+        e.Handled = true;
+    }
+
+    private void OnSplitterPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_splitterDragging)
+        {
+            return;
+        }
+
+        _splitterDragging = false;
+        SplitterBar.ReleasePointerCapture(e.Pointer);
+        _preferences.EditorPaneWidth = _savedEditorWidth;
+        _preferencesStore.Save(_preferences);
+        e.Handled = true;
     }
 
     private void UpdateTitle()
@@ -557,6 +731,72 @@ public sealed partial class MainPage : Page
         {
             window.SetDocumentStatus(_viewModel.DocumentDisplayName);
         }
+    }
+
+    private void UpdateWordCount()
+    {
+        var words = string.IsNullOrWhiteSpace(MarkdownEditor.Text)
+            ? 0
+            : MarkdownEditor.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        WordCountText.Text = $"{words} words";
+    }
+
+    private void UpdateLineNumbers()
+    {
+        if (LineNumberPanel.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        var lines = string.IsNullOrEmpty(MarkdownEditor.Text) ? 1 : MarkdownEditor.Text.Count(c => c == '\n') + 1;
+        LineNumberText.Text = string.Join('\n', Enumerable.Range(1, lines));
+    }
+
+    private void SetStatus(string message) => StatusText.Text = message;
+
+    private void PersistDocumentSettings()
+    {
+        CopySettings(_viewModel.Settings, _preferences.LastDocumentSettings);
+        _preferencesStore.Save(_preferences);
+    }
+
+    private static void CopySettings(DocumentSettings source, DocumentSettings target)
+    {
+        target.Theme = source.Theme;
+        target.Page = new PageSettings
+        {
+            PageSize = source.Page.PageSize,
+            Orientation = source.Page.Orientation,
+            MarginTopMm = source.Page.MarginTopMm,
+            MarginRightMm = source.Page.MarginRightMm,
+            MarginBottomMm = source.Page.MarginBottomMm,
+            MarginLeftMm = source.Page.MarginLeftMm,
+            PrintBackgroundGraphics = source.Page.PrintBackgroundGraphics,
+        };
+        target.Branding = new BrandingSettings
+        {
+            Enabled = source.Branding.Enabled,
+            CompanyName = source.Branding.CompanyName,
+            DocumentTitle = source.Branding.DocumentTitle,
+            Subtitle = source.Branding.Subtitle,
+            Author = source.Branding.Author,
+            DocumentDate = source.Branding.DocumentDate,
+            FooterText = source.Branding.FooterText,
+            WatermarkText = source.Branding.WatermarkText,
+            ShowCoverPage = source.Branding.ShowCoverPage,
+            ShowPageNumbers = source.Branding.ShowPageNumbers,
+            LogoAlignment = source.Branding.LogoAlignment,
+            LogoWidthPx = source.Branding.LogoWidthPx,
+            LogoFilePath = source.Branding.LogoFilePath,
+            LogoDataUri = source.Branding.LogoDataUri,
+            AccentColorHex = source.Branding.AccentColorHex,
+            BodyFont = source.Branding.BodyFont,
+            HeadingFont = source.Branding.HeadingFont,
+            BaseFontSizePt = source.Branding.BaseFontSizePt,
+            LineSpacing = source.Branding.LineSpacing,
+        };
+        target.BaseDirectoryForRelativeAssets = source.BaseDirectoryForRelativeAssets;
+        target.EnableEmojiProcessing = source.EnableEmojiProcessing;
     }
 
     private void RememberRecent(string path)
@@ -602,13 +842,8 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private static string GetDraftPath()
-    {
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Paperdown",
-            "draft.md");
-    }
+    private static string GetDraftPath() =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Paperdown", "draft.md");
 
     private async Task<bool> ConfirmDiscardAsync()
     {
@@ -623,17 +858,17 @@ public sealed partial class MainPage : Page
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
-    private async Task ShowErrorAsync(string message)
+    private async Task ShowMessageAsync(string title, string message)
     {
         var dialog = new ContentDialog
         {
-            Title = "Paperdown",
+            Title = title,
             Content = message,
             CloseButtonText = "OK",
             XamlRoot = XamlRoot,
         };
         await dialog.ShowAsync();
-        StatusText.Text = message;
+        SetStatus(message);
     }
 
     private void InitializePicker(object picker)
@@ -674,6 +909,7 @@ public sealed partial class MainPage : Page
         _viewModel.IsDirty = false;
         RememberRecent(file.Path);
         UpdateTitle();
+        UpdateWordCount();
         await UpdatePreviewAsync();
     }
 

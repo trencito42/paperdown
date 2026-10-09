@@ -20,6 +20,7 @@ public sealed class HtmlDocumentRenderer : IDocumentRenderer
     public string RenderCompleteHtmlDocument(string markdown, DocumentSettings settings)
     {
         var bodyHtml = _markdownProcessor.ConvertToHtml(markdown, settings);
+        bodyHtml = RelativeAssetResolver.ResolveImages(bodyHtml, settings.BaseDirectoryForRelativeAssets);
         if (settings.EnableEmojiProcessing)
         {
             bodyHtml = _emojiResolver.ProcessEmojisInHtml(bodyHtml);
@@ -47,10 +48,9 @@ public sealed class HtmlDocumentRenderer : IDocumentRenderer
             sb.AppendLine($"  h1, h2, h3, h4, h5, h6 {{ font-family: {settings.Branding.HeadingFont}; }}");
         }
 
-        var pageSize = settings.Page.PageSize == PageSize.A4 ? "A4" : "letter";
-        var orientation = settings.Page.Orientation == PageOrientation.Landscape ? "landscape" : "portrait";
+        var pageSize = PageDimensions.ToCssPageSize(settings.Page);
         sb.AppendLine(
-            $"  @page {{ size: {pageSize} {orientation}; margin: {settings.Page.MarginTopMm}mm {settings.Page.MarginRightMm}mm {settings.Page.MarginBottomMm}mm {settings.Page.MarginLeftMm}mm; }}");
+            $"  @page {{ size: {pageSize}; margin: {settings.Page.MarginTopMm}mm {settings.Page.MarginRightMm}mm {settings.Page.MarginBottomMm}mm {settings.Page.MarginLeftMm}mm; }}");
 
         if (settings.Branding.Enabled && settings.Branding.ShowPageNumbers)
         {

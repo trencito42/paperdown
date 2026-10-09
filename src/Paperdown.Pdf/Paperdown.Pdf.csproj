@@ -7,7 +7,10 @@
     <RootNamespace>Paperdown.Pdf</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3719.77" />
+    <PackageReference Include="Microsoft.Web.WebView2">
+      <PrivateAssets>none</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="PdfPig" />
     <ProjectReference Include="..\Paperdown.Core\Paperdown.Core.csproj" />
     <ProjectReference Include="..\Paperdown.Rendering\Paperdown.Rendering.csproj" />
   </ItemGroup>

@@ -31,13 +31,14 @@ _Screenshots will be added after the first public release build._
 
 - Windows 10 1809+ or Windows 11
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on Windows 11)
+- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (Evergreen; required for preview and PDF export)
+- Build/run the **x64** app on 64-bit Windows (`Debug|x64` or `Release|x64`). The output must include `WebView2Loader.dll` and `runtimes/win-x64/native/WebView2Loader.dll`.
 - Visual Studio 2022 17.8+ with **.NET Desktop Development** and **Windows application development** workloads (optional, for IDE debugging)
 
 ## Build from source
 
 ```powershell
-git clone https://github.com/your-org/paperdown.git
+git clone https://github.com/trencito42/paperdown.git
 cd paperdown
 dotnet restore Paperdown.sln
 dotnet build Paperdown.sln -c Release -p:Platform=x64
@@ -63,6 +64,14 @@ dotnet run --project src/Paperdown.Cli/Paperdown.Cli.csproj -c Release -- conver
 ```
 
 Output: `artifacts/portable/win-x64/Paperdown.App/`
+
+## Branding
+
+The app logo is [`paperdown.svg`](paperdown.svg) (document + `#153774` download arrow). WinUI tiles, splash, and `AppIcon.ico` are generated from `src/Paperdown.App/Assets/paperdown.svg`:
+
+```powershell
+dotnet run --project scripts/GenerateAppIcons/GenerateAppIcons.csproj -c Release
+```
 
 ## Solution layout
 
