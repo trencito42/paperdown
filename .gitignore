@@ -4,11 +4,11 @@ obj/
 *.user
 *.suo
 TestResults/
-# Generated PDF documents (not the Paperdown.Pdf project folder on Windows)
+# Generated PDF documents (case-insensitive *.pdf also matches folder Paperdown.Pdf on Windows)
 **/*.pdf
 !tests/Paperdown.Tests/Fixtures/**
-!src/Paperdown.Pdf/
-!src/Paperdown.Pdf/**
+!src/Paperdown.Pdf/*.cs
+!src/Paperdown.Pdf/*.csproj
 .DS_Store
 artifacts/
 publish/
