@@ -4,8 +4,11 @@ obj/
 *.user
 *.suo
 TestResults/
-*.pdf
-!tests/**/Fixtures/**
+# Generated PDF documents (not the Paperdown.Pdf project folder on Windows)
+**/*.pdf
+!tests/Paperdown.Tests/Fixtures/**
+!src/Paperdown.Pdf/
+!src/Paperdown.Pdf/**
 .DS_Store
 artifacts/
 publish/
