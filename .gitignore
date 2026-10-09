@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+*.pdf
+!tests/**/Fixtures/**
+.DS_Store
+artifacts/
+publish/
+*.appx
+*.msix
+*.nupkg

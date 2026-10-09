@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Paperdown.Rendering</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Paperdown.Core\Paperdown.Core.csproj" />
+    <ProjectReference Include="..\Paperdown.Markdown\Paperdown.Markdown.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Themes\Styles\*.css" />
+    <Content Include="Assets\Twemoji\svg\*.svg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

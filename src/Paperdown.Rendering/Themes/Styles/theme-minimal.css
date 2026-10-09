@@ -1,0 +1,14 @@
+body.theme-minimal {
+  font-family: "Segoe UI Variable", "Segoe UI", Georgia, serif;
+}
+
+body.theme-minimal h1,
+body.theme-minimal h2,
+body.theme-minimal h3 {
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+body.theme-minimal .paperdown-document {
+  color: #1f2937;
+}

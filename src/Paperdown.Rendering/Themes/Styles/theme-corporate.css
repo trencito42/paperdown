@@ -1,0 +1,18 @@
+body.theme-corporate {
+  font-family: "Segoe UI", Calibri, sans-serif;
+  color: #0f172a;
+}
+
+body.theme-corporate h1,
+body.theme-corporate h2,
+body.theme-corporate h3 {
+  color: var(--accent-color, #1d4ed8);
+}
+
+body.theme-corporate .cover-title {
+  color: var(--accent-color, #1d4ed8);
+}
+
+body.theme-corporate table th {
+  background: color-mix(in srgb, var(--accent-color, #1d4ed8) 12%, white);
+}

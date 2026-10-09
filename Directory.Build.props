@@ -1,0 +1,6 @@
+<Project>
+  <!-- Visual Studio: prefer x64 for WinUI when solution platform is Any CPU -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'Paperdown.App' and ('$(Platform)' == '' or '$(Platform)' == 'Any CPU')">
+    <Platform>x64</Platform>
+  </PropertyGroup>
+</Project>

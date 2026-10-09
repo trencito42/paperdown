@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Paperdown.Cli</RootNamespace>
+    <AssemblyName>paperdown</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="..\Paperdown.Rendering\Assets\Twemoji\svg\*.svg">
+      <Link>Assets\Twemoji\svg\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Paperdown.Core\Paperdown.Core.csproj" />
+    <ProjectReference Include="..\Paperdown.Markdown\Paperdown.Markdown.csproj" />
+    <ProjectReference Include="..\Paperdown.Rendering\Paperdown.Rendering.csproj" />
+    <ProjectReference Include="..\Paperdown.Pdf\Paperdown.Pdf.csproj" />
+  </ItemGroup>
+</Project>

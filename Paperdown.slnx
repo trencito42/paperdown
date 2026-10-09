@@ -1,0 +1,24 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+    <Platform Name="ARM64" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/Paperdown.App/Paperdown.App.csproj">
+      <Platform Solution="*|Any CPU" Project="x64" />
+      <Platform Solution="*|x64" Project="x64" />
+      <Platform Solution="*|x86" Project="x86" />
+      <Platform Solution="*|ARM64" Project="ARM64" />
+    </Project>
+    <Project Path="src/Paperdown.Cli/Paperdown.Cli.csproj" />
+    <Project Path="src/Paperdown.Core/Paperdown.Core.csproj" />
+    <Project Path="src/Paperdown.Markdown/Paperdown.Markdown.csproj" />
+    <Project Path="src/Paperdown.Pdf/Paperdown.Pdf.csproj" />
+    <Project Path="src/Paperdown.Rendering/Paperdown.Rendering.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Paperdown.Tests/Paperdown.Tests.csproj" />
+  </Folder>
+</Solution>

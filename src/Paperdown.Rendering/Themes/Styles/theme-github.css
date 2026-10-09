@@ -1,0 +1,31 @@
+body.theme-github {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  color: #1f2328;
+}
+
+body.theme-github h1 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #d1d9e0;
+}
+
+body.theme-github h2 {
+  border-bottom: 1px solid #d1d9e0;
+}
+
+body.theme-github code {
+  background: #eff1f3;
+}
+
+body.theme-github pre {
+  background: #f6f8fa;
+  border-color: #d1d9e0;
+}
+
+body.theme-github blockquote {
+  border-left-color: #d1d9e0;
+  color: #59636e;
+}
+
+body.theme-github th {
+  background: #f6f8fa;
+}

@@ -1,0 +1,37 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore Paperdown.sln
+
+      - name: Build
+        run: dotnet build Paperdown.sln -c Release -p:Platform=x64 --no-restore
+
+      - name: Test
+        run: dotnet test tests/Paperdown.Tests/Paperdown.Tests.csproj -c Release --no-build --verbosity normal
+
+      - name: Publish portable app (x64)
+        run: |
+          dotnet publish src/Paperdown.App/Paperdown.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/app
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperdown-win-x64
+          path: artifacts/app

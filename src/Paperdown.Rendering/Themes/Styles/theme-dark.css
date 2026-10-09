@@ -1,0 +1,43 @@
+body.theme-dark {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+body.theme-dark h1,
+body.theme-dark h2,
+body.theme-dark h3,
+body.theme-dark h4 {
+  color: #f8fafc;
+}
+
+body.theme-dark h2 {
+  border-bottom-color: #334155;
+}
+
+body.theme-dark code {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+body.theme-dark pre {
+  background: #111827;
+  border-color: #334155;
+}
+
+body.theme-dark blockquote {
+  border-left-color: #475569;
+  color: #cbd5e1;
+}
+
+body.theme-dark th {
+  background: #1e293b;
+}
+
+body.theme-dark td,
+body.theme-dark th {
+  border-color: #334155;
+}
+
+body.theme-dark a {
+  color: #93c5fd;
+}
